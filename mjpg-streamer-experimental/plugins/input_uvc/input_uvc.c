@@ -824,7 +824,7 @@ endloop:
 
     DBG("leaving input thread, calling cleanup function now\n");
     pthread_cleanup_pop(1);
-
+    exit(-1);
     return NULL;
 }
 

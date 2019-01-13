@@ -47,6 +47,7 @@
 static pthread_t worker;
 static globals *pglobal;
 static int fd, delay, ringbuffer_size = -1, ringbuffer_exceed = 0, max_frame_size;
+static avi_t* avifd;
 static char *folder = "/tmp";
 static unsigned char *frame = NULL;
 static char *command = NULL;
@@ -87,7 +88,7 @@ void worker_cleanup(void *arg)
     static unsigned char first_run = 1;
 
     if (aviFileName != NULL) {
-        AVI_close(fd);
+        AVI_close(avifd);
     }
 
     if(!first_run) {
@@ -326,10 +327,11 @@ void *worker_thread(void *arg)
         } else { // recording to avi file
             /* save picture to file */
            // if(write(fd, frame, frame_size) < 0) {
-            if(AVI_write_frame(fd, frame, frame_size,0))
+            if(AVI_write_frame(avifd, frame, frame_size,0)<0)
+            {
                 OPRINT("could not write to file %s\n", buffer2);
                 perror("write()");
-                AVI_close(fd);
+                AVI_close(avifd);
                 return NULL;
             }
         }
@@ -476,10 +478,7 @@ int output_init(output_parameter *param, int id)
         OPRINT("ERROR: the %d input_plugin number is too much only %d plugins loaded\n", input_number, param->global->incnt);
         return 1;
     }
-    if(aviFileName!=NULL)
-    {
-	   
-    }
+
     OPRINT("output folder.....: %s\n", folder);
     OPRINT("input plugin.....: %d: %s\n", input_number, pglobal->in[input_number].plugin);
     OPRINT("delay after save..: %d\n", delay);
@@ -494,14 +493,14 @@ int output_init(output_parameter *param, int id)
         sprintf(fnBuffer, "%s/%s", folder, aviFileName);
 
         OPRINT("output file.......: %s\n", fnBuffer);
-        fd = AVI_open_output_file(aviFileName);
-	    if(fd!=NULL)
+        avifd = AVI_open_output_file(aviFileName);
+        if(avifd!=NULL)
 	    {
-		    AVI_set_video(out_fd, 320, 240, 25, "MJPG");
+            AVI_set_video(avifd, 320, 240, 25, "MJPG");
 	    }
 	    else
 	    {
-             PRINT("could not open the file %s\n", fnBuffer);
+            OPRINT("could not open the file %s\n", fnBuffer);
             free(fnBuffer);
 		    exit(EXIT_FAILURE);
 	    }

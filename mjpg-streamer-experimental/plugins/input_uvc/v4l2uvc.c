@@ -621,7 +621,8 @@ int uvcGrab(struct vdIn *vd)
     ret = xioctl(vd->fd, VIDIOC_DQBUF, &vd->buf);
     if(ret < 0) {
         perror("Unable to dequeue buffer");
-        goto err;
+       // goto err;
+        return -1;
     }
 
     switch(vd->formatIn) {

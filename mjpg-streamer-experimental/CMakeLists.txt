@@ -1,7 +1,13 @@
 cmake_minimum_required(VERSION 2.8.3)
 set(CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake ${CMAKE_MODULE_PATH})
+set(CMAKE_C_COMPILER gcc)
+set(CMAKE_CXX_COMPILER g++)
 
 project("mjpg-streamer" C)
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/lib)
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/lib)
+LINK_DIRECTORIES(${PROJECT_SOURCE_DIR}/lib)
+set(CMAKE_C_FLAGS "-std=gnu99 -Wl,-rpath,lib")
 
 # If the user doesn't manually specify a build type, use 'Release'
 message("CMAKE_BUILD_TYPE = ${CMAKE_BUILD_TYPE}")
@@ -58,7 +64,7 @@ find_library(JPEG_LIB jpeg)
 
 add_subdirectory(plugins/input_file)
 add_subdirectory(plugins/input_http)
-add_subdirectory(plugins/input_opencv)
+#add_subdirectory(plugins/input_opencv)
 add_subdirectory(plugins/input_raspicam)
 add_subdirectory(plugins/input_ptp2)
 add_subdirectory(plugins/input_uvc)
