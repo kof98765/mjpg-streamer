@@ -67,7 +67,7 @@ void help(void)
             " ---------------------------------------------------------------\n" \
             " The following parameters can be passed to this plugin:\n\n" \
             " [-f | --folder ]........: folder to save pictures\n" \
-            " [-m | --avi ].........: save the frames to an mjpg file \n" \
+            " [-m | --avi ].........: save the frames to an avi file \n" \
             " [-l | --link ]..........: link the last picture in ringbuffer as this fixed named file\n" \
             " [-d | --delay ].........: delay after saving pictures in ms\n" \
             " [-i | --input ].........: read frames from the specified input plugin\n" \
@@ -493,7 +493,7 @@ int output_init(output_parameter *param, int id)
         sprintf(fnBuffer, "%s/%s", folder, aviFileName);
 
         OPRINT("output file.......: %s\n", fnBuffer);
-        avifd = AVI_open_output_file(aviFileName);
+        avifd = AVI_open_output_file(fnBuffer);
         if(avifd!=NULL)
 	    {
             AVI_set_video(avifd, 320, 240, 25, "MJPG");

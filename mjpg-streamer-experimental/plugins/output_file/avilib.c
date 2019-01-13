@@ -564,7 +564,7 @@ int avi_update_header(avi_t *AVI)
    
    //2001-11-14 added id string 
 
-   if(njunk > int(strlen(id_str)+8)) {
+   if(njunk > (strlen(id_str)+8)) {
      //sprintf(id_str, "%s-%s", PACKAGE, VERSION);
      //memcpy(AVI_header+nhb, id_str, strlen(id_str));
    }
