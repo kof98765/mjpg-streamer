@@ -38,7 +38,7 @@
 #include <dirent.h>
 
 #include "output_file.h"
-
+#include "avilib.h"
 #include "../../utils.h"
 #include "../../mjpg_streamer.h"
 
@@ -51,7 +51,7 @@ static char *folder = "/tmp";
 static unsigned char *frame = NULL;
 static char *command = NULL;
 static int input_number = 0;
-static char *mjpgFileName = NULL;
+static char *aviFileName = NULL;
 static char *linkFileName = NULL;
 
 /******************************************************************************
@@ -66,7 +66,7 @@ void help(void)
             " ---------------------------------------------------------------\n" \
             " The following parameters can be passed to this plugin:\n\n" \
             " [-f | --folder ]........: folder to save pictures\n" \
-            " [-m | --mjpeg ].........: save the frames to an mjpg file \n" \
+            " [-m | --avi ].........: save the frames to an mjpg file \n" \
             " [-l | --link ]..........: link the last picture in ringbuffer as this fixed named file\n" \
             " [-d | --delay ].........: delay after saving pictures in ms\n" \
             " [-i | --input ].........: read frames from the specified input plugin\n" \
@@ -86,8 +86,8 @@ void worker_cleanup(void *arg)
 {
     static unsigned char first_run = 1;
 
-    if (mjpgFileName != NULL) {
-        close(fd);
+    if (aviFileName != NULL) {
+        AVI_close(fd);
     }
 
     if(!first_run) {
@@ -242,7 +242,7 @@ void *worker_thread(void *arg)
         /* allow others to access the global buffer again */
         pthread_mutex_unlock(&pglobal->in[input_number].db);
 
-        if (mjpgFileName == NULL) { // single files with ringbuffer mode
+        if (aviFileName == NULL) { // single files with ringbuffer mode
             /* prepare filename */
             memset(buffer1, 0, sizeof(buffer1));
             memset(buffer2, 0, sizeof(buffer2));
@@ -323,12 +323,13 @@ void *worker_thread(void *arg)
                 DBG("counter: %llu, will clean-up now\n", counter);
                 maintain_ringbuffer(ringbuffer_size);
             }
-        } else { // recording to MJPG file
+        } else { // recording to avi file
             /* save picture to file */
-            if(write(fd, frame, frame_size) < 0) {
+           // if(write(fd, frame, frame_size) < 0) {
+            if(AVI_write_frame(fd, frame, frame_size,0))
                 OPRINT("could not write to file %s\n", buffer2);
                 perror("write()");
-                close(fd);
+                AVI_close(fd);
                 return NULL;
             }
         }
@@ -344,6 +345,7 @@ void *worker_thread(void *arg)
 
     return NULL;
 }
+
 
 /*** plugin interface functions ***/
 /******************************************************************************
@@ -385,7 +387,7 @@ int output_init(output_parameter *param, int id)
             {"i", required_argument, 0, 0},
             {"input", required_argument, 0, 0},
             {"m", required_argument, 0, 0},
-            {"mjpeg", required_argument, 0, 0},
+            {"avi", required_argument, 0, 0},
             {"l", required_argument, 0, 0},
             {"link", required_argument, 0, 0},
             {"c", required_argument, 0, 0},
@@ -449,11 +451,11 @@ int output_init(output_parameter *param, int id)
             DBG("case 12,13\n");
             input_number = atoi(optarg);
             break;
-            /* m mjpeg */
+            /* m avi */
         case 12:
         case 13:
             DBG("case 12,13\n");
-            mjpgFileName = strdup(optarg);
+            aviFileName = strdup(optarg);
             break;
             /* l link */
         case 14:
@@ -474,26 +476,42 @@ int output_init(output_parameter *param, int id)
         OPRINT("ERROR: the %d input_plugin number is too much only %d plugins loaded\n", input_number, param->global->incnt);
         return 1;
     }
-
+    if(aviFileName!=NULL)
+    {
+	   
+    }
     OPRINT("output folder.....: %s\n", folder);
     OPRINT("input plugin.....: %d: %s\n", input_number, pglobal->in[input_number].plugin);
     OPRINT("delay after save..: %d\n", delay);
-    if  (mjpgFileName == NULL) {
+    if  (aviFileName == NULL) {
         if(ringbuffer_size > 0) {
             OPRINT("ringbuffer size...: %d to %d\n", ringbuffer_size, ringbuffer_size + ringbuffer_exceed);
         } else {
             OPRINT("ringbuffer size...: %s\n", "no ringbuffer");
         }
     } else {
-        char *fnBuffer = malloc(strlen(mjpgFileName) + strlen(folder) + 3);
-        sprintf(fnBuffer, "%s/%s", folder, mjpgFileName);
+        char *fnBuffer = malloc(strlen(aviFileName) + strlen(folder) + 3);
+        sprintf(fnBuffer, "%s/%s", folder, aviFileName);
 
         OPRINT("output file.......: %s\n", fnBuffer);
+        fd = AVI_open_output_file(aviFileName);
+	    if(fd!=NULL)
+	    {
+		    AVI_set_video(out_fd, 320, 240, 25, "MJPG");
+	    }
+	    else
+	    {
+             PRINT("could not open the file %s\n", fnBuffer);
+            free(fnBuffer);
+		    exit(EXIT_FAILURE);
+	    }
+        /*
         if((fd = open(fnBuffer, O_CREAT | O_RDWR | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) < 0) {
             OPRINT("could not open the file %s\n", fnBuffer);
             free(fnBuffer);
             return 1;
         }
+        */
         free(fnBuffer);
     }
 
