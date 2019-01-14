@@ -47,7 +47,7 @@
 static pthread_t worker;
 static globals *pglobal;
 static int fd, delay, ringbuffer_size = -1, ringbuffer_exceed = 0, max_frame_size;
-static avi_t* avifd;
+static avi_t* avifd=NULL;
 static char *folder = "/tmp";
 static unsigned char *frame = NULL;
 static char *command = NULL;
@@ -63,19 +63,19 @@ Return Value: -
 void help(void)
 {
     fprintf(stderr, " ---------------------------------------------------------------\n" \
-            " Help for output plugin..: "OUTPUT_PLUGIN_NAME"\n" \
-            " ---------------------------------------------------------------\n" \
-            " The following parameters can be passed to this plugin:\n\n" \
-            " [-f | --folder ]........: folder to save pictures\n" \
-            " [-m | --avi ].........: save the frames to an avi file \n" \
-            " [-l | --link ]..........: link the last picture in ringbuffer as this fixed named file\n" \
-            " [-d | --delay ].........: delay after saving pictures in ms\n" \
-            " [-i | --input ].........: read frames from the specified input plugin\n" \
-            " The following arguments are takes effect only if the current mode is not MJPG\n" \
-            " [-s | --size ]..........: size of ring buffer (max number of pictures to hold)\n" \
-            " [-e | --exceed ]........: allow ringbuffer to exceed limit by this amount\n" \
-            " [-c | --command ].......: execute command after saving picture\n"\
-            " ---------------------------------------------------------------\n");
+                    " Help for output plugin..: "OUTPUT_PLUGIN_NAME"\n" \
+                                                                   " ---------------------------------------------------------------\n" \
+                                                                   " The following parameters can be passed to this plugin:\n\n" \
+                                                                   " [-f | --folder ]........: folder to save pictures\n" \
+                                                                   " [-m | --avi ].........: save the frames to an avi file \n" \
+                                                                   " [-l | --link ]..........: link the last picture in ringbuffer as this fixed named file\n" \
+                                                                   " [-d | --delay ].........: delay after saving pictures in ms\n" \
+                                                                   " [-i | --input ].........: read frames from the specified input plugin\n" \
+                                                                   " The following arguments are takes effect only if the current mode is not MJPG\n" \
+                                                                   " [-s | --size ]..........: size of ring buffer (max number of pictures to hold)\n" \
+                                                                   " [-e | --exceed ]........: allow ringbuffer to exceed limit by this amount\n" \
+                                                                   " [-c | --command ].......: execute command after saving picture\n"\
+                                                                   " ---------------------------------------------------------------\n");
 }
 
 /******************************************************************************
@@ -195,7 +195,75 @@ void maintain_ringbuffer(int size)
     /* free last just allocated resources */
     free(namelist);
 }
+/**
+ * 检查某类文件,比如eventLog-2018-10-11.log，eventLog-2018-10-12.log
+   如果文件超过一定个数，则删除最早创建的
+@param  head-文件名的头部
+@param count-文件个数
+**/
+void checkAndClearLog(char *pathname,char *head,int count)
+{
+    DIR *dfd;
+    char name[100];
+    struct dirent *dp;
+    int fileCount=0;
+    char fileList[100][100];
+    time_t timeList[100];
+    memset(fileList,0,sizeof(fileList));
+    memset(timeList,0,sizeof(timeList));
 
+    if ((dfd = opendir(pathname)) == NULL)
+    {
+        //AppLogOut("dir_order: can't open %s\n %s", pathname,strerror(errno));
+        return ;
+    }
+
+    while ((dp = readdir(dfd)) != NULL)
+    {
+        if (strncmp(dp->d_name, ".", 1) == 0)
+            continue; /* ????????????????????*/
+        if (strlen(pathname) + strlen(dp->d_name) + 2 > sizeof(name))
+        {
+            //printf("dir_order: name %s %s too long\n", pathname, dp->d_name);
+            continue;
+        }
+        if(strncmp(head,dp->d_name,strlen(head))==0)
+        {
+            struct stat fileStat;
+            sprintf(name,"%s/%s",pathname,dp->d_name);
+            if(fileCount>=100)
+                break;
+            if(stat(name,&fileStat)>=0)
+            {
+                sprintf(fileList[fileCount],"%s",dp->d_name);
+                timeList[fileCount]=fileStat.st_ctime;
+                fileCount++;
+            }
+        }
+    }
+    int deleteCount=fileCount-count;//计算待删除文件数
+    if(deleteCount>0)
+    {
+        for(int j=0;j<deleteCount;j++)
+        {
+            time_t min=time(NULL);
+            int index=0;
+            for(int i=0;i<fileCount;i++)
+            {
+                if(timeList[i]<min)
+                {
+                    min=timeList[i];
+                    index=i;
+                }
+            }
+            sprintf(name,"%s/%s",pathname,fileList[index]);
+            remove(name);
+            timeList[index]=time(NULL);
+        }
+    }
+
+    closedir(dfd);
+}
 /******************************************************************************
 Description.: this is the main worker thread
               it loops forever, grabs a fresh frame and stores it to file
@@ -210,7 +278,7 @@ void *worker_thread(void *arg)
     time_t t;
     struct tm *now;
     unsigned char *tmp_framebuffer = NULL;
-
+    static int frame_count=0;
     /* set cleanup handler to cleanup allocated resources */
     pthread_cleanup_push(worker_cleanup, NULL);
 
@@ -326,14 +394,49 @@ void *worker_thread(void *arg)
             }
         } else { // recording to avi file
             /* save picture to file */
-           // if(write(fd, frame, frame_size) < 0) {
+            // if(write(fd, frame, frame_size) < 0) {
+            memset(buffer1, 0, sizeof(buffer1));
+            t = time(NULL);
+            now = localtime(&t);
+            sprintf(buffer1, "%s/%s-%04d-%02d-%02d_%02d:%02d.avi", folder, aviFileName,now->tm_year+1900,now->tm_mon+1,now->tm_mday,now->tm_hour,now->tm_min);
+
+            // OPRINT("output file.......: %s\n", buffer1);
+            if(avifd==NULL)
+            {
+                avifd = AVI_open_output_file(buffer1);
+                if(avifd!=NULL)
+                {
+                    AVI_set_video(avifd, 640, 480, 15, "MJPG");
+                }
+                else
+                {
+                    OPRINT("could not open the file %s\n", buffer1);
+                    exit(EXIT_FAILURE);
+                }
+            }
+            /*
+            if((fd = open(fnBuffer, O_CREAT | O_RDWR | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) < 0) {
+                OPRINT("could not open the file %s\n", fnBuffer);
+                free(fnBuffer);
+                return 1;
+            }
+            */
+            frame_count++;
             if(AVI_write_frame(avifd, frame, frame_size,0)<0)
             {
                 OPRINT("could not write to file %s\n", buffer2);
                 perror("write()");
                 AVI_close(avifd);
-                return NULL;
+                avifd=NULL;
             }
+            if(frame_count>900)//5min
+            {
+                AVI_close(avifd);
+                avifd=NULL;
+                frame_count=0;
+            }
+
+            checkAndClearLog(folder,aviFileName,10);
         }
 
         /* if specified, wait now */
@@ -358,7 +461,7 @@ Return Value: 0 if everything is OK, non-zero otherwise
 ******************************************************************************/
 int output_init(output_parameter *param, int id)
 {
-	int i;
+    int i;
     delay = 0;
     pglobal = param->global;
     pglobal->out[id].name = malloc((1+strlen(OUTPUT_PLUGIN_NAME))*sizeof(char));
@@ -376,26 +479,26 @@ int output_init(output_parameter *param, int id)
     while(1) {
         int option_index = 0, c = 0;
         static struct option long_options[] = {
-            {"h", no_argument, 0, 0},
-            {"help", no_argument, 0, 0},
-            {"f", required_argument, 0, 0},
-            {"folder", required_argument, 0, 0},
-            {"d", required_argument, 0, 0},
-            {"delay", required_argument, 0, 0},
-            {"s", required_argument, 0, 0},
-            {"size", required_argument, 0, 0},
-            {"e", required_argument, 0, 0},
-            {"exceed", required_argument, 0, 0},
-            {"i", required_argument, 0, 0},
-            {"input", required_argument, 0, 0},
-            {"m", required_argument, 0, 0},
-            {"avi", required_argument, 0, 0},
-            {"l", required_argument, 0, 0},
-            {"link", required_argument, 0, 0},
-            {"c", required_argument, 0, 0},
-            {"command", required_argument, 0, 0},
-            {0, 0, 0, 0}
-        };
+        {"h", no_argument, 0, 0},
+        {"help", no_argument, 0, 0},
+        {"f", required_argument, 0, 0},
+        {"folder", required_argument, 0, 0},
+        {"d", required_argument, 0, 0},
+        {"delay", required_argument, 0, 0},
+        {"s", required_argument, 0, 0},
+        {"size", required_argument, 0, 0},
+        {"e", required_argument, 0, 0},
+        {"exceed", required_argument, 0, 0},
+        {"i", required_argument, 0, 0},
+        {"input", required_argument, 0, 0},
+        {"m", required_argument, 0, 0},
+        {"avi", required_argument, 0, 0},
+        {"l", required_argument, 0, 0},
+        {"link", required_argument, 0, 0},
+        {"c", required_argument, 0, 0},
+        {"command", required_argument, 0, 0},
+        {0, 0, 0, 0}
+    };
 
         c = getopt_long_only(param->argc, param->argv, "", long_options, &option_index);
 
@@ -409,7 +512,7 @@ int output_init(output_parameter *param, int id)
         }
 
         switch(option_index) {
-            /* h, help */
+        /* h, help */
         case 0:
         case 1:
             DBG("case 0,1\n");
@@ -489,29 +592,7 @@ int output_init(output_parameter *param, int id)
             OPRINT("ringbuffer size...: %s\n", "no ringbuffer");
         }
     } else {
-        char *fnBuffer = malloc(strlen(aviFileName) + strlen(folder) + 3);
-        sprintf(fnBuffer, "%s/%s", folder, aviFileName);
 
-        OPRINT("output file.......: %s\n", fnBuffer);
-        avifd = AVI_open_output_file(fnBuffer);
-        if(avifd!=NULL)
-	    {
-            AVI_set_video(avifd, 320, 240, 25, "MJPG");
-	    }
-	    else
-	    {
-            OPRINT("could not open the file %s\n", fnBuffer);
-            free(fnBuffer);
-		    exit(EXIT_FAILURE);
-	    }
-        /*
-        if((fd = open(fnBuffer, O_CREAT | O_RDWR | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) < 0) {
-            OPRINT("could not open the file %s\n", fnBuffer);
-            free(fnBuffer);
-            return 1;
-        }
-        */
-        free(fnBuffer);
     }
 
     param->global->out[id].parametercount = 2;
@@ -519,36 +600,36 @@ int output_init(output_parameter *param, int id)
     param->global->out[id].out_parameters = (control*) calloc(2, sizeof(control));
 
     control take_ctrl;
-	take_ctrl.group = IN_CMD_GENERIC;
-	take_ctrl.menuitems = NULL;
-	take_ctrl.value = 1;
-	take_ctrl.class_id = 0;
+    take_ctrl.group = IN_CMD_GENERIC;
+    take_ctrl.menuitems = NULL;
+    take_ctrl.value = 1;
+    take_ctrl.class_id = 0;
 
-	take_ctrl.ctrl.id = OUT_FILE_CMD_TAKE;
-	take_ctrl.ctrl.type = V4L2_CTRL_TYPE_BUTTON;
-	strcpy((char*) take_ctrl.ctrl.name, "Take snapshot");
-	take_ctrl.ctrl.minimum = 0;
-	take_ctrl.ctrl.maximum = 1;
-	take_ctrl.ctrl.step = 1;
-	take_ctrl.ctrl.default_value = 0;
+    take_ctrl.ctrl.id = OUT_FILE_CMD_TAKE;
+    take_ctrl.ctrl.type = V4L2_CTRL_TYPE_BUTTON;
+    strcpy((char*) take_ctrl.ctrl.name, "Take snapshot");
+    take_ctrl.ctrl.minimum = 0;
+    take_ctrl.ctrl.maximum = 1;
+    take_ctrl.ctrl.step = 1;
+    take_ctrl.ctrl.default_value = 0;
 
-	param->global->out[id].out_parameters[0] = take_ctrl;
+    param->global->out[id].out_parameters[0] = take_ctrl;
 
     control filename_ctrl;
-	filename_ctrl.group = IN_CMD_GENERIC;
-	filename_ctrl.menuitems = NULL;
-	filename_ctrl.value = 1;
-	filename_ctrl.class_id = 0;
+    filename_ctrl.group = IN_CMD_GENERIC;
+    filename_ctrl.menuitems = NULL;
+    filename_ctrl.value = 1;
+    filename_ctrl.class_id = 0;
 
-	filename_ctrl.ctrl.id = OUT_FILE_CMD_FILENAME;
-	filename_ctrl.ctrl.type = V4L2_CTRL_TYPE_STRING;
-	strcpy((char*) filename_ctrl.ctrl.name, "Filename");
-	filename_ctrl.ctrl.minimum = 0;
-	filename_ctrl.ctrl.maximum = 32;
-	filename_ctrl.ctrl.step = 1;
-	filename_ctrl.ctrl.default_value = 0;
+    filename_ctrl.ctrl.id = OUT_FILE_CMD_FILENAME;
+    filename_ctrl.ctrl.type = V4L2_CTRL_TYPE_STRING;
+    strcpy((char*) filename_ctrl.ctrl.name, "Filename");
+    filename_ctrl.ctrl.minimum = 0;
+    filename_ctrl.ctrl.maximum = 32;
+    filename_ctrl.ctrl.step = 1;
+    filename_ctrl.ctrl.default_value = 0;
 
-	param->global->out[id].out_parameters[1] = filename_ctrl;
+    param->global->out[id].out_parameters[1] = filename_ctrl;
 
 
     return 0;
@@ -584,82 +665,82 @@ int output_cmd(int plugin_id, unsigned int control_id, unsigned int group, int v
     int i = 0;
     DBG("command (%d, value: %d) for group %d triggered for plugin instance #%02d\n", control_id, value, group, plugin_id);
     switch(group) {
-		case IN_CMD_GENERIC:
-			for(i = 0; i < pglobal->out[plugin_id].parametercount; i++) {
-				if((pglobal->out[plugin_id].out_parameters[i].ctrl.id == control_id) && (pglobal->out[plugin_id].out_parameters[i].group == IN_CMD_GENERIC)) {
-					DBG("Generic control found (id: %d): %s\n", control_id, pglobal->out[plugin_id].out_parameters[i].ctrl.name);
-					switch(control_id) {
-                            case OUT_FILE_CMD_TAKE: {
-                                if (valueStr != NULL) {
-                                    int frame_size = 0;
-                                    unsigned char *tmp_framebuffer = NULL;
+    case IN_CMD_GENERIC:
+        for(i = 0; i < pglobal->out[plugin_id].parametercount; i++) {
+            if((pglobal->out[plugin_id].out_parameters[i].ctrl.id == control_id) && (pglobal->out[plugin_id].out_parameters[i].group == IN_CMD_GENERIC)) {
+                DBG("Generic control found (id: %d): %s\n", control_id, pglobal->out[plugin_id].out_parameters[i].ctrl.name);
+                switch(control_id) {
+                case OUT_FILE_CMD_TAKE: {
+                    if (valueStr != NULL) {
+                        int frame_size = 0;
+                        unsigned char *tmp_framebuffer = NULL;
 
-                                    if(pthread_mutex_lock(&pglobal->in[input_number].db)) {
-                                        DBG("Unable to lock mutex\n");
-                                        return -1;
-                                    }
-                                    /* read buffer */
-                                    frame_size = pglobal->in[input_number].size;
+                        if(pthread_mutex_lock(&pglobal->in[input_number].db)) {
+                            DBG("Unable to lock mutex\n");
+                            return -1;
+                        }
+                        /* read buffer */
+                        frame_size = pglobal->in[input_number].size;
 
-                                    /* check if buffer for frame is large enough, increase it if necessary */
-                                    if(frame_size > max_frame_size) {
-                                        DBG("increasing buffer size to %d\n", frame_size);
+                        /* check if buffer for frame is large enough, increase it if necessary */
+                        if(frame_size > max_frame_size) {
+                            DBG("increasing buffer size to %d\n", frame_size);
 
-                                        max_frame_size = frame_size + (1 << 16);
-                                        if((tmp_framebuffer = realloc(frame, max_frame_size)) == NULL) {
-                                            pthread_mutex_unlock(&pglobal->in[input_number].db);
-                                            LOG("not enough memory\n");
-                                            return -1;
-                                        }
-
-                                        frame = tmp_framebuffer;
-                                    }
-
-                                    /* copy frame to our local buffer now */
-                                    memcpy(frame, pglobal->in[input_number].buf, frame_size);
-
-                                    /* allow others to access the global buffer again */
-                                    pthread_mutex_unlock(&pglobal->in[input_number].db);
-
-                                    DBG("writing file: %s\n", valueStr);
-
-                                    int fd;
-                                    /* open file for write */
-                                    if((fd = open(valueStr, O_CREAT | O_RDWR | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) < 0) {
-                                        OPRINT("could not open the file %s\n", valueStr);
-                                        return -1;
-                                    }
-
-                                    /* save picture to file */
-                                    if(write(fd, frame, frame_size) < 0) {
-                                        OPRINT("could not write to file %s\n", valueStr);
-                                        perror("write()");
-                                        close(fd);
-                                        return -1;
-                                    }
-
-                                    close(fd);
-                                } else {
-                                    DBG("No filename specified\n");
-                                    return -1;
-                                }
-                            } break;
-                            case OUT_FILE_CMD_FILENAME: {
-                                DBG("Not yet implemented\n");
+                            max_frame_size = frame_size + (1 << 16);
+                            if((tmp_framebuffer = realloc(frame, max_frame_size)) == NULL) {
+                                pthread_mutex_unlock(&pglobal->in[input_number].db);
+                                LOG("not enough memory\n");
                                 return -1;
-                            } break;
-                            default: {
-                                DBG("Unknown command\n");
-                                return -1;
-                            } break;
-					}
-					DBG("Ctrl %s new value: %d\n", pglobal->out[plugin_id].out_parameters[i].ctrl.name, value);
-					return 0;
-				}
-			}
-			DBG("Requested generic control (%d) did not found\n", control_id);
-			return -1;
-			break;
-	}
+                            }
+
+                            frame = tmp_framebuffer;
+                        }
+
+                        /* copy frame to our local buffer now */
+                        memcpy(frame, pglobal->in[input_number].buf, frame_size);
+
+                        /* allow others to access the global buffer again */
+                        pthread_mutex_unlock(&pglobal->in[input_number].db);
+
+                        DBG("writing file: %s\n", valueStr);
+
+                        int fd;
+                        /* open file for write */
+                        if((fd = open(valueStr, O_CREAT | O_RDWR | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) < 0) {
+                            OPRINT("could not open the file %s\n", valueStr);
+                            return -1;
+                        }
+
+                        /* save picture to file */
+                        if(write(fd, frame, frame_size) < 0) {
+                            OPRINT("could not write to file %s\n", valueStr);
+                            perror("write()");
+                            close(fd);
+                            return -1;
+                        }
+
+                        close(fd);
+                    } else {
+                        DBG("No filename specified\n");
+                        return -1;
+                    }
+                } break;
+                case OUT_FILE_CMD_FILENAME: {
+                    DBG("Not yet implemented\n");
+                    return -1;
+                } break;
+                default: {
+                    DBG("Unknown command\n");
+                    return -1;
+                } break;
+                }
+                DBG("Ctrl %s new value: %d\n", pglobal->out[plugin_id].out_parameters[i].ctrl.name, value);
+                return 0;
+            }
+        }
+        DBG("Requested generic control (%d) did not found\n", control_id);
+        return -1;
+        break;
+    }
     return 0;
 }
